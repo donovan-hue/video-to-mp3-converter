@@ -1,0 +1,122 @@
+"use client";
+
+import { useState } from "react";
+
+const MP3_QUALITIES = [
+  { value: 128, label: "128 kbps", description: "Archivo pequeño" },
+  { value: 192, label: "192 kbps", description: "Equilibrio recomendado" },
+  { value: 256, label: "256 kbps", description: "Alta calidad" },
+  { value: 320, label: "320 kbps", description: "Máxima calidad MP3" },
+] as const;
+
+export default function Converter() {
+  const [url, setUrl] = useState("");
+  const [bitrate, setBitrate] = useState(192);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/convert", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url, bitrate }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Error ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      const dlUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+
+      a.href = dlUrl;
+
+      const filename =
+        (res.headers.get("content-disposition") || "audio.mp3").match(
+          /filename="?([^";]+)/i,
+        )?.[1] || "audio.mp3";
+
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(dlUrl);
+    } catch (err: any) {
+      setError(err?.message || "Fallo la conversión");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-8 grid gap-4">
+      <label className="grid gap-2">
+        <span className="text-sm text-slate-700">Enlace de video MP4</span>
+
+        <input
+          type="url"
+          placeholder="https://.../video.mp4"
+          required
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2 text-base outline-none ring-primary-500 focus:ring-2"
+        />
+      </label>
+
+      <fieldset className="grid gap-2">
+        <legend className="text-sm font-medium text-slate-700">
+          Calidad MP3
+        </legend>
+
+        <div className="grid gap-2">
+          {MP3_QUALITIES.map((quality) => (
+            <label
+              key={quality.value}
+              className="flex cursor-pointer items-center gap-3 rounded-lg border border-slate-200 px-4 py-3 hover:bg-slate-50"
+            >
+              <input
+                type="radio"
+                name="bitrate"
+                value={quality.value}
+                checked={bitrate === quality.value}
+                onChange={() => setBitrate(quality.value)}
+              />
+
+              <span className="flex flex-1 items-center justify-between gap-4">
+                <span className="font-medium text-slate-900">
+                  {quality.label}
+                </span>
+
+                <span className="text-sm text-slate-500">
+                  {quality.description}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      <button
+        type="submit"
+        disabled={loading}
+        className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-white hover:bg-slate-800 disabled:opacity-50"
+      >
+        {loading ? "Convirtiendo..." : "Convertir a MP3"}
+      </button>
+
+      {error && <p className="text-sm text-red-600">{error}</p>}
+
+      <p className="text-xs text-slate-500">
+        El archivo MP3 se descargará automáticamente cuando termine la
+        conversión.
+      </p>
+    </form>
+  );
+}

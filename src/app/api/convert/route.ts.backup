@@ -1,0 +1,90 @@
+import ffmpeg from "fluent-ffmpeg";
+import ffmpegStatic from "ffmpeg-static";
+import { Readable } from "stream";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function getFilenameFromUrl(url: string) {
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split("/").filter(Boolean).pop() ?? "audio";
+    const base = last.replace(/\.[^./]+$/, "");
+    return `${base || "audio"}.mp3`;
+  } catch {
+    return "audio.mp3";
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const { url } = (await req.json()) as { url?: string };
+    if (!url || typeof url !== "string") {
+      return new Response(JSON.stringify({ error: "Missing 'url' in JSON body" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+      if (!/^https?:$/.test(parsed.protocol)) throw new Error("Invalid protocol");
+    } catch {
+      return new Response(JSON.stringify({ error: "URL inválida. Usa http(s)://" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (!ffmpegStatic) {
+      return new Response(JSON.stringify({ error: "No se encontró ffmpeg en el servidor" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // Configure ffmpeg binary
+    ffmpeg.setFfmpegPath(ffmpegStatic);
+
+    // Create a PassThrough stream and pipe ffmpeg output (mp3) into it
+    const pass = new (await import("stream")).PassThrough();
+
+    // Start ffmpeg conversion reading directly from the remote URL
+    const cmd = ffmpeg(parsed.toString())
+      .noVideo()
+      .format("mp3")
+      .audioBitrate(192)
+      .on("error", (err) => {
+        pass.destroy(err as Error);
+      })
+      .on("start", () => {
+        // could log start
+      })
+      .on("end", () => {
+        pass.end();
+      });
+
+    cmd.pipe(pass, { end: true });
+
+    // Convert Node stream to Web ReadableStream for Next Response
+    const webStream = (Readable as any).toWeb
+      ? (Readable as any).toWeb(pass)
+      : (pass as any);
+
+    const filename = getFilenameFromUrl(url);
+
+    return new Response(webStream as any, {
+      headers: {
+        "content-type": "audio/mpeg",
+        "content-disposition": `attachment; filename=\"${filename}\"`,
+        "cache-control": "no-store",
+      },
+    });
+  } catch (err: any) {
+    return new Response(
+      JSON.stringify({ error: "Fallo la conversión", details: String(err?.message || err) }),
+      { status: 500, headers: { "content-type": "application/json" } }
+    );
+  }
+}
